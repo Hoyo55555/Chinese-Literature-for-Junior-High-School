@@ -579,6 +579,8 @@
 
     <script>
         // --- 1. UI Logic ---
+        const TEACHER_PASSWORD = 'ccc052227';  // 教師通行碼，可自行修改
+
         const observer = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
@@ -596,15 +598,36 @@
             document.getElementById('secret-btn').addEventListener('click', () => {
                 clickCount++;
                 if (clickCount === 5) {
-                    toggleDashboard();
+                    // 點滿 5 次後歸零，避免持續觸發
                     clickCount = 0;
-                    Swal.fire({
-                        icon: 'success',
-                        title: '教師專區已開啟',
-                        text: '歡迎回來，Hsu 老師！',
-                        timer: 1500,
-                        showConfirmButton: false
-                    });
+
+                    // 跳出教師通行碼輸入框
+                    const input = prompt('請輸入教師通行碼：');
+
+                    // 若使用者按「取消」，直接結束
+                    if (input === null) {
+                        return;
+                    }
+
+                    // 密碼正確才開啟教師面板
+                    if (input === TEACHER_PASSWORD) {
+                        toggleDashboard();
+                        Swal.fire({
+                            icon: 'success',
+                            title: '教師專區已開啟',
+                            text: '歡迎回來，Hsu 老師！',
+                            timer: 1500,
+                            showConfirmButton: false
+                        });
+                    } else {
+                        // 密碼錯誤提示
+                        Swal.fire({
+                            icon: 'error',
+                            title: '通行碼錯誤',
+                            text: '請確認後再試一次。',
+                            confirmButtonText: '我知道了'
+                        });
+                    }
                 }
             });
         });
