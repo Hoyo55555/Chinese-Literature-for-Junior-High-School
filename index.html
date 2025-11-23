@@ -19,6 +19,9 @@
     <!-- SweetAlert2 -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
+    <!-- Chart.js for Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
     <!-- Firebase Scripts -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
@@ -56,13 +59,15 @@
             }
         });
 
-        window.submitQuizResult = async (nickname, score, answers) => {
+        // Update: Now submitting full analysis details
+        window.submitQuizResult = async (nickname, score, analysisData) => {
             if (!window.user) return;
             try {
                 const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'quiz_results');
                 await addDoc(colRef, {
                     nickname: nickname,
                     score: score,
+                    details: analysisData, // Array of { category, question, isCorrect }
                     timestamp: serverTimestamp(),
                     userId: window.user.uid
                 });
@@ -79,10 +84,10 @@
                 snapshot.forEach((doc) => {
                     results.push({ id: doc.id, ...doc.data() });
                 });
-                results.sort((a, b) => {
-                    if (b.score !== a.score) return b.score - a.score;
-                    return (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0);
-                });
+                // Sort by timestamp desc (newest first)
+                results.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0));
+                
+                // Global function to render
                 renderDashboard(results);
             });
         };
@@ -305,6 +310,22 @@
         .secret-trigger:hover {
             color: var(--accent-red);
         }
+
+        /* Analytics Styles */
+        .stat-bar-container {
+            width: 100%;
+            background-color: #eee;
+            border-radius: 10px;
+            height: 10px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+        .stat-bar-fill {
+            height: 100%;
+            border-radius: 10px;
+            background-color: #27ae60;
+            transition: width 1s ease;
+        }
     </style>
 </head>
 <body class="antialiased selection:bg-red-100 selection:text-red-900">
@@ -521,15 +542,35 @@
             <div id="teacher-dashboard" class="hidden bg-white p-8 rounded-xl shadow-inner border border-gray-200">
                 <h3 class="font-bold text-xl mb-6 flex items-center gap-3 text-gray-800">
                     <i data-lucide="bar-chart-2" class="text-teal-600 w-6 h-6"></i> 
-                    學生作答即時看板
+                    教師專區：班級作答分析
                 </h3>
-                <div class="text-sm text-gray-500 mb-4 bg-yellow-50 p-4 rounded border border-yellow-100">
-                    <p class="font-bold text-gray-700 mb-2"><i data-lucide="info" class="w-4 h-4 inline mr-1"></i> 數據會自動同步。請分享此網頁連結給學生，他們的成績就會即時出現在這裡。</p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="bg-gray-50 p-4 rounded-lg">
+                        <h4 class="font-bold text-gray-700 mb-2">班級弱點分析 (答對率)</h4>
+                        <div id="class-stats-container" class="space-y-3">
+                            <p class="text-sm text-gray-500">正在計算中...</p>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 p-4 rounded-lg flex flex-col justify-center items-center">
+                        <div class="text-3xl font-bold text-red-600" id="total-students">0</div>
+                        <div class="text-sm text-gray-500">總作答人數</div>
+                    </div>
                 </div>
+
                 <div class="overflow-x-auto">
                     <table class="w-full text-sm text-left text-gray-500">
-                        <thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th class="px-6 py-4">時間</th><th class="px-6 py-4">暱稱</th><th class="px-6 py-4">分數</th><th class="px-6 py-4">狀態</th></tr></thead>
-                        <tbody id="dashboard-table-body"><tr><td colspan="4" class="px-6 py-4 text-center text-gray-400">目前尚無數據，等待學生挑戰中...</td></tr></tbody>
+                        <thead class="text-xs text-gray-700 uppercase bg-gray-100">
+                            <tr>
+                                <th class="px-6 py-4">時間</th>
+                                <th class="px-6 py-4">暱稱</th>
+                                <th class="px-6 py-4">分數</th>
+                                <th class="px-6 py-4">詳細診斷</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dashboard-table-body">
+                            <tr><td colspan="4" class="px-6 py-4 text-center text-gray-400">尚無數據</td></tr>
+                        </tbody>
                     </table>
                 </div>
             </div>
@@ -740,9 +781,18 @@
                 html: `
                     <p class="mb-4 text-gray-600">點擊擊碎三個鎖鏈，解鎖核心結論！</p>
                     <div class="lock-container">
-                        <i id="lock1" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(1)"></i>
-                        <i id="lock2" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(2)"></i>
-                        <i id="lock3" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(3)"></i>
+                        <div class="lock-wrapper">
+                            <i id="lock1" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(1)"></i>
+                            <span class="lock-label">成見</span>
+                        </div>
+                        <div class="lock-wrapper">
+                            <i id="lock2" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(2)"></i>
+                            <span class="lock-label">懶惰</span>
+                        </div>
+                        <div class="lock-wrapper">
+                            <i id="lock3" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(3)"></i>
+                            <span class="lock-label">冷漠</span>
+                        </div>
                     </div>
                 `,
                 showConfirmButton: false,
@@ -755,11 +805,7 @@
         window.unlock = (id) => {
             const el = document.getElementById(`lock${id}`);
             if (!el.classList.contains('unlocked')) {
-                // Logic check: must unlock in order (optional, but good for game feel)
-                // Here we allow any order for simplicity, or strictly 1->2->3
-                
                 el.classList.add('unlocked');
-                // Change icon visually after animation starts
                 setTimeout(() => {
                     el.setAttribute('data-lucide', 'unlock');
                     lucide.createIcons();
@@ -768,8 +814,8 @@
                 unlockedCount++;
                 if (unlockedCount === 3) {
                     setTimeout(() => {
-                        Swal.close(); // Close game modal
-                        showCoreMessage(); // Show reward
+                        Swal.close(); 
+                        showCoreMessage(); 
                     }, 800);
                 }
             }
@@ -796,53 +842,53 @@
             lucide.createIcons();
         }
 
-        // --- 5. Quiz Logic (20 Questions Mode) ---
+        // --- 5. Quiz Logic & Question Pool with Categories ---
         const fullQuizPool = [
-            // --- 國字注音與改錯 ---
-            { q: "交「卸」：請輸入「 」中文字的注音。", opts: ["ㄒㄧㄝˋ", "ㄩ", "ㄕㄨˇ", "ㄒㄧㄚˊ"], ans: 0, note: "卸（ㄒㄧㄝˋ）：解除。" },
-            { q: "管「轄」：請輸入「 」中文字的注音。", opts: ["ㄒㄧㄚˊ", "ㄏㄜˊ", "ㄍㄨㄢˇ", "ㄑㄧㄚˋ"], ans: 0, note: "轄（ㄒㄧㄚˊ）：管理、統制。" },
-            { q: "禁「錮」：請輸入「 」中文字的注音。", opts: ["ㄍㄨˋ", "ㄍㄨˇ", "ㄎㄨˋ", "ㄏㄨˋ"], ans: 0, note: "錮（ㄍㄨˋ）：封閉、監禁。" },
-            { q: "身陷囹「圄」：請輸入「 」中文字的注音。", opts: ["ㄩˇ", "ㄨˊ", "ㄍㄨˋ", "ㄡ"], ans: 0, note: "圄（ㄩˇ）：監獄。" },
-            { q: "「罹」患：請輸入「 」中文字的注音。", opts: ["ㄌㄧˊ", "ㄌㄨㄛˊ", "ㄨㄟˊ", "ㄌㄡˋ"], ans: 0, note: "罹（ㄌㄧˊ）：遭受（疾病或災禍）。" },
-            { q: "「躊躇」：請輸入「 」中文字的注音。", opts: ["ㄔㄡˊ ㄔㄨˊ", "ㄓㄨˋ ㄓㄨˋ", "ㄕㄡˋ ㄓㄨˋ", "ㄊㄠˊ ㄊㄞˋ"], ans: 0, note: "躊躇（ㄔㄡˊ ㄔㄨˊ）：猶豫不決的樣子。" },
-            { q: "蹣「跚」：請輸入「 」中文字的注音。", opts: ["ㄕㄢ", "ㄇㄢˊ", "ㄕㄢˋ", "ㄘㄜˋ"], ans: 0, note: "跚（ㄕㄢ）：形容走路緩慢不穩。" },
-            { q: "狼「藉」：請輸入「 」中文字的注音。", opts: ["ㄐㄧˊ", "ㄐㄧㄝˋ", "ㄐㄧ", "ㄒㄧˊ"], ans: 0, note: "藉（ㄐㄧˊ）：雜亂的樣子。" },
-            { q: "連「署」：請輸入「 」中文字的注音。", opts: ["ㄕㄨˇ", "ㄓㄨˇ", "ㄕㄨˋ", "ㄊㄨˊ"], ans: 0, note: "署（ㄕㄨˇ）：簽名。" },
-            { q: "「迂」腐：請輸入「 」中文字的注音。", opts: ["ㄩ", "ㄩˊ", "ㄍㄢ", "ㄑㄧㄢ"], ans: 0, note: "迂（ㄩ）：言行守舊，不切實際。" },
-            { q: "「頹」喪：請輸入「 」中文字的注音。", opts: ["ㄊㄨㄟˊ", "ㄊㄨ", "ㄎㄜ", "ㄅㄞˋ"], ans: 0, note: "頹（ㄊㄨㄟˊ）：倒塌，引申為意志消沉。" },
-            { q: "「拭」淚：請輸入「 」中文字的注音。", opts: ["ㄕˋ", "ㄔˋ", "ㄗㄜˊ", "ㄉㄞˋ"], ans: 0, note: "拭（ㄕˋ）：擦抹。" },
-            { q: "「揀」定：請輸入「 」中文字的注音。", opts: ["ㄐㄧㄢˇ", "ㄌㄧㄢˋ", "ㄉㄨㄥ", "ㄙㄨˋ"], ans: 0, note: "揀（ㄐㄧㄢˇ）：挑選。" },
-            { q: "主「宰」：請輸入「 」中文字的注音。", opts: ["ㄗㄞˇ", "ㄒㄧㄣ", "ㄍㄨ", "ㄑㄧㄢ"], ans: 0, note: "宰（ㄗㄞˇ）：主持、治理。" },
-            { q: "下列哪個選項用字完全正確？", opts: ["一股作氣", "再接再厲", "甘拜下風", "走頭無路"], ans: 2, note: "A應為「一鼓作氣」；B應為「再接再厲」；D應為「走投無路」。" },
+            // --- 國字注音 (cat: 注音) ---
+            { cat: '注音', q: "交「卸」：請輸入「 」中文字的注音。", opts: ["ㄒㄧㄝˋ", "ㄩ", "ㄕㄨˇ", "ㄒㄧㄚˊ"], ans: 0, note: "卸（ㄒㄧㄝˋ）：解除。" },
+            { cat: '注音', q: "管「轄」：請輸入「 」中文字的注音。", opts: ["ㄒㄧㄚˊ", "ㄏㄜˊ", "ㄍㄨㄢˇ", "ㄑㄧㄚˋ"], ans: 0, note: "轄（ㄒㄧㄚˊ）：管理、統制。" },
+            { cat: '注音', q: "禁「錮」：請輸入「 」中文字的注音。", opts: ["ㄍㄨˋ", "ㄍㄨˇ", "ㄎㄨˋ", "ㄏㄨˋ"], ans: 0, note: "錮（ㄍㄨˋ）：封閉、監禁。" },
+            { cat: '注音', q: "身陷囹「圄」：請輸入「 」中文字的注音。", opts: ["ㄩˇ", "ㄨˊ", "ㄍㄨˋ", "ㄡ"], ans: 0, note: "圄（ㄩˇ）：監獄。" },
+            { cat: '注音', q: "「罹」患：請輸入「 」中文字的注音。", opts: ["ㄌㄧˊ", "ㄌㄨㄛˊ", "ㄨㄟˊ", "ㄌㄡˋ"], ans: 0, note: "罹（ㄌㄧˊ）：遭受。" },
+            { cat: '注音', q: "「躊躇」：請輸入「 」中文字的注音。", opts: ["ㄔㄡˊ ㄔㄨˊ", "ㄓㄨˋ ㄓㄨˋ", "ㄕㄡˋ ㄓㄨˋ", "ㄊㄠˊ ㄊㄞˋ"], ans: 0, note: "躊躇：猶豫不決。" },
+            { cat: '注音', q: "蹣「跚」：請輸入「 」中文字的注音。", opts: ["ㄕㄢ", "ㄇㄢˊ", "ㄕㄢˋ", "ㄘㄜˋ"], ans: 0, note: "跚（ㄕㄢ）：走路緩慢不穩。" },
+            { cat: '注音', q: "狼「藉」：請輸入「 」中文字的注音。", opts: ["ㄐㄧˊ", "ㄐㄧㄝˋ", "ㄐㄧ", "ㄒㄧˊ"], ans: 0, note: "藉（ㄐㄧˊ）：雜亂。" },
+            { cat: '注音', q: "連「署」：請輸入「 」中文字的注音。", opts: ["ㄕㄨˇ", "ㄓㄨˇ", "ㄕㄨˋ", "ㄊㄨˊ"], ans: 0, note: "署（ㄕㄨˇ）：簽名。" },
+            { cat: '注音', q: "「迂」腐：請輸入「 」中文字的注音。", opts: ["ㄩ", "ㄩˊ", "ㄍㄢ", "ㄑㄧㄢ"], ans: 0, note: "迂（ㄩ）：言行守舊。" },
+            { cat: '注音', q: "「頹」喪：請輸入「 」中文字的注音。", opts: ["ㄊㄨㄟˊ", "ㄊㄨ", "ㄎㄜ", "ㄅㄞˋ"], ans: 0, note: "頹（ㄊㄨㄟˊ）：倒塌，意志消沉。" },
+            { cat: '注音', q: "「拭」淚：請輸入「 」中文字的注音。", opts: ["ㄕˋ", "ㄔˋ", "ㄗㄜˊ", "ㄉㄞˋ"], ans: 0, note: "拭（ㄕˋ）：擦抹。" },
+            { cat: '注音', q: "「揀」定：請輸入「 」中文字的注音。", opts: ["ㄐㄧㄢˇ", "ㄌㄧㄢˋ", "ㄉㄨㄥ", "ㄙㄨˋ"], ans: 0, note: "揀（ㄐㄧㄢˇ）：挑選。" },
+            { cat: '注音', q: "主「宰」：請輸入「 」中文字的注音。", opts: ["ㄗㄞˇ", "ㄒㄧㄣ", "ㄍㄨ", "ㄑㄧㄢ"], ans: 0, note: "宰（ㄗㄞˇ）：主持。" },
+            { cat: '注音', q: "下列哪個選項用字完全正確？", opts: ["一股作氣", "再接再厲", "甘拜下風", "走頭無路"], ans: 2, note: "A一鼓作氣 B再接再厲 D走投無路。" },
             
-            // --- 詞義與修辭 ---
-            { q: "「譬如為山，未成一簣」的「簣」是指什麼？", opts: ["盛土的竹筐", "一種山的名字", "一種石頭", "計算時間的單位"], ans: 0, note: "簣：盛土的竹器。" },
-            { q: "「大去之期不遠矣」的「大去」使用了什麼修辭？", opts: ["婉曲", "誇飾", "譬喻", "映襯"], ans: 0, note: "婉曲：不直說死亡，而用委婉的詞語代替。" },
-            { q: "「我那時真是太聰明了」一句，作者使用了什麼修辭來表達自責？", opts: ["倒反", "譬喻", "轉化", "設問"], ans: 0, note: "倒反：言非所意，其實是說自己當時太愚笨，不懂父親苦心。" },
-            { q: "「三人行，必有我師焉」這句話的主旨是什麼？", opts: ["隨時隨地向人學習", "三個人走路比較安全", "老師一定要找三個人", "交朋友要小心"], ans: 0, note: "強調學習的對象無所不在，擇善而從。" },
-            { q: "在「背影」一文中下列選項沒有使用象徵手法？", opts: ["紫毛大衣", "朱紅的橘子", "黑布小帽", "手杖"], ans: 3, note: "文中未使用手杖作為象徵手法，橘子與紫毛大衣則是具體展現。" },
+            // --- 詞義與修辭 (cat: 修辭) ---
+            { cat: '修辭', q: "「譬如為山，未成一簣」的「簣」是指什麼？", opts: ["盛土的竹筐", "山的名字", "石頭", "時間單位"], ans: 0, note: "簣：盛土的竹器。" },
+            { cat: '修辭', q: "「大去之期不遠矣」使用了什麼修辭？", opts: ["婉曲", "誇飾", "譬喻", "映襯"], ans: 0, note: "婉曲：不直說死亡。" },
+            { cat: '修辭', q: "「我那時真是太聰明了」使用了什麼修辭？", opts: ["倒反", "譬喻", "轉化", "設問"], ans: 0, note: "倒反：其實是說自己太愚笨。" },
+            { cat: '修辭', q: "「三人行，必有我師焉」主旨為何？", opts: ["隨時學習", "走路安全", "找三個老師", "交友小心"], ans: 0, note: "擇善而從。" },
+            { cat: '修辭', q: "下列何者不是「背影」中象徵父愛的物品？", opts: ["紫毛大衣", "朱紅的橘子", "黑布小帽", "手杖"], ans: 3, note: "橘子與大衣是具體父愛的展現。" },
 
-            // --- 課文理解 ---
-            { q: "小明放學回家反省：「今天答應小華的事有沒有做到？」這是實踐《論語》哪種精神？", opts: ["與朋友交而不信乎", "傳不習乎", "為人謀而不忠乎", "學而時習之"], ans: 0, note: "信：誠信。答應朋友的事要做到。" },
-            { q: "「譬如為山，未成一簣，止，吾止也。」這句話勉勵我們什麼？", opts: ["持之以恆", "量力而為", "見好就收", "分工合作"], ans: 0, note: "強調做事不能半途而廢。" },
-            { q: "「見賢思齊焉，見不賢而內自省也」的意思是什麼？", opts: ["看到好人要學習，看到壞人要反省自己", "看到好人要嫉妒", "看到有才華的人要讚美", "看到不賢的人要教訓他"], ans: 0, note: "這是修身的方法，正反兩面皆可為師。" },
-            { q: "曾子曰：「吾日三省吾身」，其中「為人謀而不忠乎」的「忠」意思是？", opts: ["盡心盡力", "效忠國家", "忠誠老實", "中庸之道"], ans: 0, note: "在此指替人辦事是否盡心竭力。" },
-            { q: "子游問孝。孔子認為「今之孝者，是謂能養」還不夠，必須具備什麼？", opts: ["敬", "禮", "義", "信"], ans: 0, note: "子曰：「...不敬，何以別乎？」強調孝順的核心在於尊敬。" },
-            { q: "在《背影》中，父親明明身材肥胖、行動不便，為什麼堅持要親自爬下月台去買橘子？", opts: ["透過費力的行動表達深情", "父親覺得朱自清不會買水果", "父親想展示體力", "橘子在特價"], ans: 0, note: "這是傳統父親「愛在心裡口難開」的表現。" },
-            { q: "《背影》一文的寫作線索（貫穿全文的關鍵）是什麼？", opts: ["背影", "橘子", "眼淚", "火車"], ans: 0, note: "全文以「背影」為線索，前後呼應。" },
-            { q: "朱自清在文中一共流了幾次淚？", opts: ["四次", "一次", "兩次", "三次"], ans: 0, note: "文中描述流淚共有四次（悲家境、感父愛、惜別、讀信）。" },
-            { q: "父親說：「我買幾個橘子去。你就在此地，不要走動。」這句話表現了什麼？", opts: ["對兒子的呵護與不放心", "父親很霸道", "父親想支開兒子", "父親怕兒子迷路"], ans: 0, note: "雖然兒子已二十歲，在父親眼中仍是需要照顧的孩子。" },
-            { q: "文末父親信中提到「膀子疼痛厲害，舉箸提筆，諸多不便」，這引發了作者什麼情緒？", opts: ["對父親衰老的感傷與思念", "對父親生病的厭煩", "想買藥給父親", "覺得父親在討拍"], ans: 0, note: "讀信看到父親身體大不如前，引發無限感傷與思念，再現背影。" },
-            { q: "在《心囚》一文中，「真正的囚犯」是指什麼？", opts: ["心靈被名利慾望鎖住的人", "身體有殘疾的人", "被關在看守所的人", "沒錢的人"], ans: 0, note: "心囚：心靈的自我禁錮。" },
-            { q: "杏林子雖然身體受限，但她如何打破「心囚」？", opts: ["轉念與創造價值", "等待奇蹟", "抱怨命運", "完全放棄"], ans: 0, note: "她透過寫作與正向思考，讓心靈自由。" },
-            { q: "文中提到「牆角的磚頭」若被拿來蓋房子，它就有了什麼？", opts: ["價值", "自由", "生命", "感情"], ans: 0, note: "比喻人若能發揮作用，生命就有價值。" },
-            { q: "下列何者是作者認為打破心囚的鑰匙？", opts: ["樂觀進取的心", "大量的金錢", "強壯的身體", "廣大的人脈"], ans: 0, note: "心靈的態度決定是否被囚禁。" },
-            { q: "「不管是有的囚犯，或是無形的囚犯，主要在於你......」接續的文句應是？", opts: ["你的心是否受到轄制", "你的身體是否自由", "你的錢是否夠多", "你的地位是否崇高"], ans: 0, note: "強調心的自主性。" },
-            { q: "關於閱讀策略「3W」，若思考「這篇文章想告訴我們什麼？」，屬於哪一個W？", opts: ["What (內容)", "Why (目的)", "How (方法)", "Where (哪裡)"], ans: 0, note: "What 指的是文章的主旨與內容。" },
-            { q: "萊恩的故事（行動的水滴）主要給我們什麼啟示？", opts: ["小小的行動也能匯聚成大力量", "要長大才能做公益", "挖井需要很多錢", "做善事是為了出名"], ans: 0, note: "強調坐而言不如起而行，積少成多。" },
-            { q: "在閱讀文章前，先看標題、圖表來預測內容，這屬於什麼策略？", opts: ["略讀與瀏覽", "精讀", "朗讀", "背誦"], ans: 0, note: "透過標題圖表快速抓重點。" },
-            { q: "萊恩為了挖井，最初做了什麼事？", opts: ["做家事賺錢", "去偷錢", "跟同學募款", "寫信給總統"], ans: 0, note: "他從自己能做的小事（做家事）開始累積。" },
-            { q: "如果文章中有圖表，我們應該注意什麼？", opts: ["標題與數據的變化", "圖表的顏色好不好看", "圖表佔多大版面", "忽略它直接看文字"], ans: 0, note: "圖表通常包含關鍵數據與趨勢。" }
+            // --- 課文理解 (cat: 理解) ---
+            { cat: '理解', q: "小明反省「答應的事有無做到」，是實踐論語哪種精神？", opts: ["與朋友交而不信乎", "傳不習乎", "為人謀而不忠乎", "學而時習之"], ans: 0, note: "信：誠信。" },
+            { cat: '理解', q: "「譬如為山，未成一簣，止，吾止也」勉勵我們？", opts: ["持之以恆", "量力而為", "見好就收", "分工合作"], ans: 0, note: "不可半途而廢。" },
+            { cat: '理解', q: "「見賢思齊焉，見不賢而內自省也」意指？", opts: ["向好人學習，見壞人反省", "嫉妒好人", "讚美才華", "教訓壞人"], ans: 0, note: "正反皆為師。" },
+            { cat: '理解', q: "「為人謀而不忠乎」的「忠」意思是？", opts: ["盡心盡力", "效忠國家", "忠誠老實", "中庸"], ans: 0, note: "替人辦事盡心竭力。" },
+            { cat: '理解', q: "孔子認為「今之孝者，是謂能養」還不夠，須具備？", opts: ["敬", "禮", "義", "信"], ans: 0, note: "核心在於尊敬。" },
+            { cat: '理解', q: "父親明明行動不便，為何堅持爬月台買橘子？", opts: ["透過行動表達深情", "覺得兒子不會買", "展示體力", "特價"], ans: 0, note: "傳統父親愛在心裡口難開。" },
+            { cat: '理解', q: "《背影》一文的寫作線索是什麼？", opts: ["背影", "橘子", "眼淚", "火車"], ans: 0, note: "背影貫穿全文。" },
+            { cat: '理解', q: "朱自清在文中一共流了幾次淚？", opts: ["四次", "一次", "兩次", "三次"], ans: 0, note: "悲家境、感父愛、惜別、讀信。" },
+            { cat: '理解', q: "父親說「不要走動」表現了什麼？", opts: ["呵護與不放心", "霸道", "支開兒子", "怕迷路"], ans: 0, note: "兒子永遠是孩子。" },
+            { cat: '理解', q: "父親信中提到「膀子疼痛」，引發作者何種情緒？", opts: ["感傷與思念", "厭煩", "想買藥", "討拍"], ans: 0, note: "感傷衰老，再現背影。" },
+            { cat: '理解', q: "「真正的囚犯」是指？", opts: ["心靈被鎖住的人", "殘疾人", "看守所犯人", "窮人"], ans: 0, note: "心靈的自我禁錮。" },
+            { cat: '理解', q: "杏林子如何打破「心囚」？", opts: ["轉念與創造價值", "等待", "抱怨", "放棄"], ans: 0, note: "寫作與正向思考。" },
+            { cat: '理解', q: "「牆角的磚頭」比喻什麼？", opts: ["發揮價值", "自由", "生命", "感情"], ans: 0, note: "天生我材必有用。" },
+            { cat: '理解', q: "打破心囚的鑰匙是？", opts: ["樂觀進取的心", "金錢", "身體", "人脈"], ans: 0, note: "心態決定一切。" },
+            { cat: '理解', q: "不管是有的囚犯或無形的囚犯，主要在於？", opts: ["心是否受轄制", "身體是否自由", "錢夠不夠", "地位高低"], ans: 0, note: "心的自主性。" },
+            { cat: '理解', q: "3W 策略中，思考「文章想告訴我們什麼」屬於？", opts: ["What", "Why", "How", "Where"], ans: 0, note: "What (內容主旨)。" },
+            { cat: '理解', q: "萊恩的故事給我們什麼啟示？", opts: ["小行動也能匯聚大力量", "長大再做", "要有錢", "為了出名"], ans: 0, note: "坐而言不如起而行。" },
+            { cat: '理解', q: "閱讀前先看標題圖表，屬於什麼策略？", opts: ["略讀瀏覽", "精讀", "朗讀", "背誦"], ans: 0, note: "快速抓重點。" },
+            { cat: '理解', q: "萊恩最初做了什麼事來挖井？", opts: ["做家事賺錢", "偷錢", "募款", "寫信"], ans: 0, note: "從自己能做的小事開始。" },
+            { cat: '理解', q: "閱讀圖表要注意什麼？", opts: ["標題數據變化", "顏色好看", "版面大小", "忽略它"], ans: 0, note: "關鍵數據與趨勢。" }
         ];
 
         let currentQuizState = { nickname: '', score: 0, currentQIndex: 0, gameQuestions: [] };
@@ -855,7 +901,7 @@
             currentQuizState.score = 0;
             currentQuizState.currentQIndex = 0;
             
-            // Randomly select 20 questions from the expanded pool
+            // Randomly select 20 questions
             const shuffled = [...fullQuizPool].sort(() => 0.5 - Math.random());
             currentQuizState.gameQuestions = shuffled.slice(0, 20);
 
@@ -875,7 +921,6 @@
             const container = document.getElementById('options-container');
             container.innerHTML = '';
 
-            // Shuffle indices for options
             let shuffledOptionIndices = [0, 1, 2, 3].sort(() => 0.5 - Math.random());
             
             shuffledOptionIndices.forEach(originalIndex => {
@@ -896,12 +941,14 @@
 
         function handleAnswer(qIndex, selectedOptionIndex) {
             const q = currentQuizState.gameQuestions[qIndex];
-            
             const isCorrect = selectedOptionIndex === q.ans;
+            
+            // Record analysis data
             q.userSelected = selectedOptionIndex;
+            q.isCorrect = isCorrect;
 
             if (isCorrect) {
-                currentQuizState.score += 5; // 20 questions * 5 pts = 100
+                currentQuizState.score += 5; 
                 Swal.fire({ icon: 'success', title: '答對了！', timer: 600, showConfirmButton: false, backdrop: `rgba(0,0,0,0.5)` });
             } else {
                 Swal.fire({ icon: 'error', title: '可惜！', timer: 600, showConfirmButton: false, backdrop: `rgba(0,0,0,0.5)` });
@@ -922,14 +969,24 @@
             const scoreEl = document.getElementById('final-score');
             scoreEl.innerText = currentQuizState.score;
 
+            // Prepare detailed analysis for DB
+            const analysisData = currentQuizState.gameQuestions.map(q => ({
+                question: q.q,
+                category: q.cat,
+                isCorrect: q.isCorrect,
+                correctAnswer: q.opts[q.ans]
+            }));
+
             const analysisDiv = document.getElementById('analysis-content');
             analysisDiv.innerHTML = currentQuizState.gameQuestions.map((q, i) => {
-                const isCorrect = q.userSelected === q.ans;
                 return `
                     <div class="border-b border-gray-700 pb-4 last:border-0">
+                        <div class="flex justify-between">
+                            <span class="text-xs bg-gray-700 px-2 py-1 rounded mb-2">${q.cat}</span>
+                        </div>
                         <p class="font-bold mb-1 text-white">Q${i+1}: ${q.q}</p>
-                        <p class="text-xs ${isCorrect ? 'text-green-400' : 'text-red-400'} mb-2">
-                            ${isCorrect ? '答對' : `答錯（正確：${q.opts[q.ans]}）`}
+                        <p class="text-xs ${q.isCorrect ? 'text-green-400' : 'text-red-400'} mb-2">
+                            ${q.isCorrect ? '答對' : `答錯（正確：${q.opts[q.ans]}）`}
                         </p>
                         <p class="text-gray-400 bg-gray-800 p-3 rounded"><span class="text-yellow-500 font-bold">解析：</span>${q.note}</p>
                     </div>
@@ -937,20 +994,130 @@
             }).join('');
 
             if (window.submitQuizResult) {
-                await window.submitQuizResult(currentQuizState.nickname, currentQuizState.score, null);
+                await window.submitQuizResult(currentQuizState.nickname, currentQuizState.score, analysisData);
             }
         }
         
+        // Enhanced Dashboard Renderer
         window.renderDashboard = (results) => {
+            // Calculate Class Weakness
+            let stats = { '注音': {t:0, c:0}, '修辭': {t:0, c:0}, '理解': {t:0, c:0} };
+            
+            results.forEach(r => {
+                if(r.details && Array.isArray(r.details)) {
+                    r.details.forEach(d => {
+                        if(stats[d.category]) {
+                            stats[d.category].t++;
+                            if(d.isCorrect) stats[d.category].c++;
+                        }
+                    });
+                }
+            });
+
+            const container = document.getElementById('class-stats-container');
+            container.innerHTML = '';
+            
+            // Sort stats to find weakest
+            Object.keys(stats).forEach(cat => {
+                if(stats[cat].t > 0) {
+                    const rate = Math.round((stats[cat].c / stats[cat].t) * 100);
+                    // Determine bar color based on rate (Red < 60, Yellow < 80, Green > 80)
+                    let barColor = '#27ae60';
+                    if(rate < 60) barColor = '#c0392b';
+                    else if(rate < 80) barColor = '#f1c40f';
+
+                    container.innerHTML += `
+                        <div class="mb-2">
+                            <div class="flex justify-between text-xs mb-1">
+                                <span>${cat}</span>
+                                <span>${rate}% 答對率</span>
+                            </div>
+                            <div class="stat-bar-container">
+                                <div class="stat-bar-fill" style="width: ${rate}%; background-color: ${barColor};"></div>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+            
+            if(Object.keys(stats).every(k => stats[k].t === 0)) {
+                container.innerHTML = '<p class="text-sm text-gray-500">需有新制測驗資料才能顯示分析</p>';
+            }
+
+            // Render Table
             const tbody = document.getElementById('dashboard-table-body');
-            if (results.length === 0) { tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-3 text-center text-gray-400">尚無數據，等待學生挑戰中...</td></tr>'; return; }
-            tbody.innerHTML = results.map(r => {
+            document.getElementById('total-students').innerText = results.length;
+
+            if (results.length === 0) { 
+                tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-4 text-center text-gray-400">尚無數據</td></tr>'; 
+                return; 
+            }
+            
+            tbody.innerHTML = results.map((r, index) => {
                 let timeStr = '剛剛';
-                if (r.timestamp) { const d = new Date(r.timestamp.seconds * 1000); timeStr = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
-                let color = r.score < 60 ? 'text-red-800 bg-red-100' : 'text-green-800 bg-green-100';
-                return `<tr class="bg-white border-b"><td class="px-4 py-3 text-gray-500 text-xs">${timeStr}</td><td class="px-4 py-3 font-bold text-gray-800">${r.nickname}</td><td class="px-4 py-3 text-gray-800">${r.score}</td><td class="px-4 py-3"><span class="${color} text-xs px-2 py-0.5 rounded">完成</span></td></tr>`;
+                if (r.timestamp) { 
+                    const d = new Date(r.timestamp.seconds * 1000); 
+                    timeStr = `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; 
+                }
+                let color = r.score < 60 ? 'text-red-600 bg-red-50' : 'text-green-600 bg-green-50';
+                
+                // Escape user data to prevent XSS in the onclick handler
+                const safeNick = r.nickname.replace(/'/g, "\\'");
+                const detailsJson = r.details ? JSON.stringify(r.details).replace(/'/g, "\\'").replace(/"/g, '&quot;') : '[]';
+
+                return `
+                    <tr class="bg-white border-b hover:bg-gray-50 transition">
+                        <td class="px-6 py-4 text-gray-500 text-xs font-mono">${timeStr}</td>
+                        <td class="px-6 py-4 font-bold text-gray-800">${r.nickname}</td>
+                        <td class="px-6 py-4 font-bold text-gray-800">${r.score}</td>
+                        <td class="px-6 py-4">
+                            <button onclick="showStudentDetail('${safeNick}', ${r.score}, '${detailsJson}')" class="text-blue-600 hover:text-blue-800 hover:underline text-xs font-bold flex items-center gap-1">
+                                <i data-lucide="search" class="w-3 h-3"></i> 查看錯題
+                            </button>
+                        </td>
+                    </tr>
+                `;
             }).join('');
-        }
+            
+            // Re-init icons for new elements
+            lucide.createIcons();
+        };
+
+        // Function to show individual student detail
+        window.showStudentDetail = (nick, score, detailsStr) => {
+            const details = JSON.parse(detailsStr.replace(/&quot;/g, '"'));
+            const wrongAnswers = details.filter(d => !d.isCorrect);
+            
+            let htmlContent = '';
+            if(wrongAnswers.length === 0) {
+                htmlContent = '<p class="text-green-600 font-bold text-center">太強了！全對！🎉</p>';
+            } else {
+                htmlContent = '<div class="text-left space-y-3 max-h-60 overflow-y-auto p-2">';
+                wrongAnswers.forEach((w, i) => {
+                    htmlContent += `
+                        <div class="text-sm border-b pb-2">
+                            <span class="bg-red-100 text-red-800 text-xs px-2 rounded">${w.category}</span>
+                            <p class="mt-1 font-bold text-gray-700">${w.question}</p>
+                            <p class="text-xs text-gray-500">正確答案: ${w.correctAnswer}</p>
+                        </div>
+                    `;
+                });
+                htmlContent += '</div>';
+            }
+
+            Swal.fire({
+                title: `${nick} 的診斷報告`,
+                html: `
+                    <div class="mb-4">
+                        <span class="text-3xl font-bold ${score < 60 ? 'text-red-600' : 'text-green-600'}">${score}分</span>
+                    </div>
+                    ${htmlContent}
+                `,
+                width: 600,
+                confirmButtonText: '關閉',
+                confirmButtonColor: '#333'
+            });
+        };
     </script>
 </body>
 </html>
