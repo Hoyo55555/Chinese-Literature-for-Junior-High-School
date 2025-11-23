@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>成長的墨跡 - 國一國文互動旅程</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&family=Noto+Serif+TC:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- SweetAlert2 -->
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+    <!-- Firebase Scripts -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+
+        window.appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(__firebase_config);
+        
+        const app = initializeApp(firebaseConfig);
+        window.auth = getAuth(app);
+        window.db = getFirestore(app);
+
+        const initAuth = async () => {
+             if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                try {
+                    await signInWithCustomToken(window.auth, __initial_auth_token);
+                } catch (e) {
+                    console.error("Custom token error", e);
+                    await signInAnonymously(window.auth);
+                }
+            } else {
+                await signInAnonymously(window.auth);
+            }
+        };
+
+        initAuth();
+
+        onAuthStateChanged(window.auth, (u) => {
+            window.user = u;
+            if(u) {
+                const startBtn = document.getElementById('start-quiz-btn');
+                if(startBtn) startBtn.disabled = false;
+                setupDashboardListener();
+            }
+        });
+
+        window.submitQuizResult = async (nickname, score, answers) => {
+            if (!window.user) return;
+            try {
+                const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'quiz_results');
+                await addDoc(colRef, {
+                    nickname: nickname,
+                    score: score,
+                    timestamp: serverTimestamp(),
+                    userId: window.user.uid
+                });
+            } catch (e) {
+                console.error("Error saving score: ", e);
+            }
+        };
+
+        window.setupDashboardListener = () => {
+            if (!window.user) return;
+            const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'quiz_results');
+            onSnapshot(colRef, (snapshot) => {
+                const results = [];
+                snapshot.forEach((doc) => {
+                    results.push({ id: doc.id, ...doc.data() });
+                });
+                results.sort((a, b) => {
+                    if (b.score !== a.score) return b.score - a.score;
+                    return (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0);
+                });
+                renderDashboard(results);
+            });
+        };
+    </script>
+
+    <style>
+        :root {
+            --ink-black: #2c2c2c;
+            --paper-bg: #fdfbf7;
+            --accent-red: #c0392b;
+            --text-font: 'Noto Sans TC', sans-serif;
+            --title-font: 'Noto Serif TC', serif;
+        }
+
+        body {
+            background-color: var(--paper-bg);
+            color: var(--ink-black);
+            font-family: var(--text-font);
+            overflow-x: hidden;
+        }
+
+        h1, h2, h3, .serif-font { font-family: var(--title-font); }
+
+        /* 1. 動態背景與視覺衝擊 */
+        .hero-bg {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(120deg, #fdfbf7 0%, #fff1e6 50%, #fdfbf7 100%);
+            background-size: 200% 200%;
+            animation: gradientMove 15s ease infinite;
+            z-index: 0;
+        }
+        @keyframes gradientMove {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        /* 2. 使用者觸發互動 (Scroll Reveal) */
+        .reveal-on-scroll {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .reveal-on-scroll.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .card-interactive {
+            transition: all 0.4s ease;
+            border: 1px solid transparent;
+        }
+        .card-interactive:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            border-color: #e5e7eb;
+        }
+
+        .ink-btn {
+            background-color: var(--ink-black); color: white; border: 2px solid var(--ink-black);
+            transition: all 0.3s ease; position: relative; overflow: hidden;
+        }
+        .ink-btn::after {
+            content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.1); transition: left 0.3s;
+        }
+        .ink-btn:hover::after { left: 0; }
+
+        /* 重點整理彈窗樣式 (清晰版) */
+        .comic-row {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin-bottom: 30px;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+            border: 1px solid #eee;
+        }
+        @media(min-width: 768px) {
+            .comic-row { flex-direction: row; }
+        }
+        .comic-img-box {
+            flex: 1;
+            min-height: 200px;
+            position: relative;
+        }
+        .comic-img {
+            width: 100%; height: 100%; object-fit: cover;
+        }
+        .comic-content {
+            flex: 1.5;
+            padding: 25px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .comic-title {
+            font-family: var(--title-font);
+            font-weight: bold;
+            font-size: 1.25rem;
+            color: #c0392b;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .comic-dialogue {
+            background: #f9f9f9;
+            border-left: 4px solid #333;
+            padding: 15px;
+            font-size: 1rem;
+            color: #444;
+            line-height: 1.7;
+            border-radius: 0 8px 8px 0;
+        }
+        .comic-original {
+            margin-top: 10px;
+            font-size: 0.85rem;
+            color: #888;
+            font-style: italic;
+        }
+
+        /* Scroll Unroll Animation */
+        @keyframes unroll {
+            0% { 
+                transform: scaleY(0); 
+                opacity: 0; 
+            }
+            100% { 
+                transform: scaleY(1); 
+                opacity: 1; 
+            }
+        }
+        .scroll-effect {
+            transform-origin: top;
+            animation: unroll 0.8s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+
+        /* Float Button */
+        .float-btn {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            background: var(--accent-red);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 50px;
+            box-shadow: 0 10px 25px rgba(192, 57, 43, 0.4);
+            cursor: pointer;
+            z-index: 100;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: transform 0.3s;
+            animation: float 3s ease-in-out infinite;
+        }
+        .float-btn:hover { transform: scale(1.05); }
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+
+        /* Unlock Game Styles */
+        .lock-container {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin: 40px 0;
+        }
+        .lock-wrapper {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .lock-icon {
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #555;
+            background: #eee;
+            padding: 15px;
+            border-radius: 50%;
+            box-shadow: 0 4px 0 #ccc;
+        }
+        .lock-icon:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 0 #ccc;
+        }
+        .lock-icon:active {
+            transform: translateY(2px);
+            box-shadow: 0 0 0 #ccc;
+        }
+        .lock-icon.unlocked {
+            color: white;
+            background: #27ae60;
+            box-shadow: 0 0 0;
+            animation: unlockAnim 0.5s forwards;
+        }
+        @keyframes unlockAnim {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2) rotate(-15deg); }
+            100% { transform: scale(1) rotate(0deg); }
+        }
+        .lock-label {
+            margin-top: 10px;
+            font-size: 0.8em;
+            color: #888;
+            font-weight: bold;
+        }
+        
+        /* Secret Trigger Area */
+        .secret-trigger {
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+        .secret-trigger:hover {
+            color: var(--accent-red);
+        }
+    </style>
+</head>
+<body class="antialiased selection:bg-red-100 selection:text-red-900">
+
+    <!-- Navbar -->
+    <nav class="fixed top-0 w-full bg-white/90 backdrop-blur-md z-50 border-b border-gray-200 py-4 px-6 flex justify-between items-center shadow-sm" id="navbar">
+        <div class="flex items-center gap-2">
+            <i data-lucide="feather" class="text-red-700 w-6 h-6"></i>
+            <span class="serif-font font-bold text-xl tracking-widest text-gray-800">文・學・旅</span>
+        </div>
+        <div class="flex gap-3">
+            <button onclick="scrollToSection('quiz-section')" class="text-sm font-bold bg-gray-900 text-white px-5 py-2 rounded-full hover:bg-gray-700 transition shadow-lg">
+                挑戰自我
+            </button>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <header class="min-h-screen flex flex-col justify-center items-center text-center px-4 relative overflow-hidden">
+        <div class="hero-bg"></div>
+        <div class="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/rice-paper.png')]"></div>
+        
+        <div class="z-10 reveal-on-scroll visible">
+            <span class="text-red-700 tracking-[0.5em] text-sm uppercase font-bold mb-6 block">Chinese Literature Journey</span>
+            <h1 class="serif-font text-5xl md:text-7xl font-bold mb-8 leading-tight text-gray-900">
+                與其死背，<br>不如<span class="relative inline-block text-red-800">
+                    讀懂人生
+                    <svg class="absolute w-full h-3 -bottom-2 left-0 text-yellow-400/60" viewBox="0 0 100 10" preserveAspectRatio="none"><path d="M0 5 Q 50 10 100 5" stroke="currentColor" stroke-width="8" fill="none" /></svg>
+                </span>
+            </h1>
+            <p class="text-gray-600 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-loose font-light">
+                嘿，同學！這不是無聊的課文，<br>這是關於「如何長大」的六個祕密錦囊。<br>準備好打開了嗎？
+            </p>
+            <button onclick="scrollToSection('core-content')" class="ink-btn px-10 py-4 rounded-full text-lg font-bold shadow-xl flex items-center gap-2 mx-auto group">
+                <span>開啟修煉之路</span>
+                <i data-lucide="arrow-down" class="group-hover:translate-y-1 transition-transform"></i>
+            </button>
+        </div>
+    </header>
+
+    <!-- Core Content: Six Great Cultivations -->
+    <section id="core-content" class="py-24 px-4 md:px-10 max-w-7xl mx-auto">
+        <div class="text-center mb-20 reveal-on-scroll">
+            <h2 class="serif-font text-4xl font-bold mb-4 text-gray-900">文學裡的六大修煉</h2>
+            <div class="w-24 h-1 bg-red-700 mx-auto rounded-full"></div>
+            <p class="mt-4 text-gray-500">點擊下方卡片，看看古人怎麼教我們解決現代煩惱。</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            
+            <!-- 1. L4 論語 -->
+            <div class="bg-white p-8 rounded-2xl shadow-lg border border-gray-100 card-interactive reveal-on-scroll group">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-orange-100 text-orange-800 text-xs font-bold px-3 py-1 rounded-full">L4 論語選</span>
+                    <h3 class="serif-font text-2xl font-bold text-gray-800">內省的鏡子</h3>
+                </div>
+                <p class="text-gray-600 mb-6 leading-relaxed">孔子不只是老師，他是最早的「人生教練」。教我們透過三招來自我升級。</p>
+                <button onclick="showDetailModal('analects')" class="w-full bg-gray-50 text-gray-800 border border-gray-200 rounded-xl p-4 font-bold text-sm flex items-center justify-between hover:bg-orange-50 hover:text-orange-700 hover:border-orange-200 transition group-hover:shadow-md">
+                    <span class="flex items-center gap-2"><i data-lucide="book-open" class="w-4 h-4"></i> 重點整理：三則選文</span>
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- 2. L5 背影 -->
+            <div class="bg-white p-8 rounded-2xl shadow-lg border border-gray-100 card-interactive reveal-on-scroll group" style="transition-delay: 100ms;">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-blue-100 text-blue-800 text-xs font-bold px-3 py-1 rounded-full">L5 背影</span>
+                    <h3 class="serif-font text-2xl font-bold text-gray-800">笨拙的溫柔</h3>
+                </div>
+                <p class="text-gray-600 mb-6 leading-relaxed">朱自清以前也覺得爸爸很煩。直到看見那個爬月台的背影，他才懂了什麼是愛。</p>
+                <button onclick="showDetailModal('backview')" class="w-full bg-gray-50 text-gray-800 border border-gray-200 rounded-xl p-4 font-bold text-sm flex items-center justify-between hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition group-hover:shadow-md">
+                    <span class="flex items-center gap-2"><i data-lucide="book-open" class="w-4 h-4"></i> 重點整理：象徵與修辭</span>
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- 3. L6 心囚 -->
+            <div class="bg-white p-8 rounded-2xl shadow-lg border border-gray-100 card-interactive reveal-on-scroll group" style="transition-delay: 200ms;">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-green-100 text-green-800 text-xs font-bold px-3 py-1 rounded-full">L6 心囚</span>
+                    <h3 class="serif-font text-2xl font-bold text-gray-800">心靈的越獄</h3>
+                </div>
+                <p class="text-gray-600 mb-6 leading-relaxed">真正的監獄不是鐵窗，而是你的心。杏林子雖然身體不能動，心卻比誰都自由。</p>
+                <button onclick="showDetailModal('prison')" class="w-full bg-gray-50 text-gray-800 border border-gray-200 rounded-xl p-4 font-bold text-sm flex items-center justify-between hover:bg-green-50 hover:text-green-700 hover:border-green-200 transition group-hover:shadow-md">
+                    <span class="flex items-center gap-2"><i data-lucide="book-open" class="w-4 h-4"></i> 重點整理：對比與轉念</span>
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- 4. 語文常識二 -->
+            <div class="bg-white p-8 rounded-2xl shadow-lg border border-gray-100 card-interactive reveal-on-scroll group" style="transition-delay: 300ms;">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-purple-100 text-purple-800 text-xs font-bold px-3 py-1 rounded-full">語文常識二</span>
+                    <h3 class="serif-font text-2xl font-bold text-gray-800">知識的導航</h3>
+                </div>
+                <p class="text-gray-600 mb-6 leading-relaxed">別再死讀書了！學會 3W 閱讀策略，讓你從「讀完」變成「讀懂」。</p>
+                <button onclick="showDetailModal('knowledge')" class="w-full bg-gray-50 text-gray-800 border border-gray-200 rounded-xl p-4 font-bold text-sm flex items-center justify-between hover:bg-purple-50 hover:text-purple-700 hover:border-purple-200 transition group-hover:shadow-md">
+                    <span class="flex items-center gap-2"><i data-lucide="book-open" class="w-4 h-4"></i> 重點整理：策略與檢索</span>
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- 5. 自學選文三 -->
+            <div class="bg-white p-8 rounded-2xl shadow-lg border border-gray-100 card-interactive reveal-on-scroll group" style="transition-delay: 400ms;">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-teal-100 text-teal-800 text-xs font-bold px-3 py-1 rounded-full">自學選文三</span>
+                    <h3 class="serif-font text-2xl font-bold text-gray-800">行動的漣漪</h3>
+                </div>
+                <p class="text-gray-600 mb-6 leading-relaxed">萊恩的故事告訴我們：夢想不需要等長大。只要開始行動，小水滴也能匯流成河。</p>
+                <button onclick="showDetailModal('ryan')" class="w-full bg-gray-50 text-gray-800 border border-gray-200 rounded-xl p-4 font-bold text-sm flex items-center justify-between hover:bg-teal-50 hover:text-teal-700 hover:border-teal-200 transition group-hover:shadow-md">
+                    <span class="flex items-center gap-2"><i data-lucide="book-open" class="w-4 h-4"></i> 重點整理：萊恩的井</span>
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- 6. 總整理 -->
+            <div class="bg-white p-8 rounded-2xl shadow-lg border-2 border-red-100 card-interactive reveal-on-scroll group" style="transition-delay: 500ms;">
+                <div class="flex items-center gap-3 mb-4">
+                    <span class="bg-red-600 text-white text-xs font-bold px-3 py-1 rounded-full">綜合統整</span>
+                    <h3 class="serif-font text-2xl font-bold text-gray-800">融會貫通</h3>
+                </div>
+                <p class="text-gray-600 mb-6 leading-relaxed">把這五課串起來，你會發現：修身、愛人、知識、行動，就是最強的人生攻略。</p>
+                <button onclick="showDetailModal('review')" class="w-full bg-red-50 text-red-800 border border-red-200 rounded-xl p-4 font-bold text-sm flex items-center justify-between hover:bg-red-100 transition group-hover:shadow-md">
+                    <span class="flex items-center gap-2"><i data-lucide="star" class="w-4 h-4"></i> 查看終極大補帖</span>
+                    <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- Quiz Section -->
+    <section id="quiz-section" class="bg-gray-900 text-[#fdfbf7] py-24 relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-96 h-96 bg-red-900 opacity-20 rounded-full -mr-20 -mt-20 blur-3xl"></div>
+        <div class="absolute bottom-0 left-0 w-64 h-64 bg-blue-900 opacity-20 rounded-full -ml-20 -mb-20 blur-3xl"></div>
+
+        <div class="max-w-3xl mx-auto px-6 relative z-10">
+            <div class="text-center mb-16">
+                <span class="text-red-400 font-bold tracking-widest text-sm uppercase">FINAL CHALLENGE</span>
+                <h2 class="serif-font text-4xl font-bold mt-4 mb-6">國文大會考・生存遊戲</h2>
+                <p class="text-gray-400 text-lg">準備好了嗎？龐大題庫隨機抽出 20 題，<br>這不是考記憶，是考你的「真實力」！</p>
+            </div>
+
+            <!-- Login -->
+            <div id="quiz-login" class="bg-white/5 backdrop-blur-lg p-10 rounded-3xl border border-white/10 text-center reveal-on-scroll">
+                <div class="mb-8">
+                    <div class="w-20 h-20 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i data-lucide="user" class="w-10 h-10 text-gray-400"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-2">請輸入你的俠客稱號</h3>
+                    <p class="text-sm text-gray-500">這個名字將會榮耀地（或羞恥地）記錄在榜單上</p>
+                </div>
+                <input type="text" id="nickname-input" placeholder="例如：淡水李白" class="w-full max-w-sm bg-black/30 border border-gray-600 rounded-xl px-6 py-4 text-white text-center text-lg focus:outline-none focus:border-red-500 mb-8 transition-colors placeholder-gray-600">
+                <button id="start-quiz-btn" onclick="startQuiz()" class="w-full max-w-sm bg-red-700 hover:bg-red-600 text-white font-bold py-4 px-8 rounded-xl transition-all transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-900/30">
+                    開始挑戰 (隨機20題)
+                </button>
+            </div>
+
+            <!-- Game Area -->
+            <div id="quiz-game" class="hidden">
+                <div class="flex justify-between items-center mb-6 text-sm text-gray-400 font-mono">
+                    <span id="question-counter">QUESTION 1 / 20</span>
+                    <span id="score-display" class="text-yellow-500 font-bold">SCORE: 0</span>
+                </div>
+                <div class="w-full h-2 bg-gray-800 rounded-full mb-10 overflow-hidden">
+                    <div id="progress-bar" class="h-full bg-gradient-to-r from-red-600 to-orange-500 transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <div class="bg-white/10 backdrop-blur-md p-8 md:p-12 rounded-3xl border border-white/10 min-h-[400px] flex flex-col justify-center shadow-2xl">
+                    <h3 id="question-text" class="text-2xl md:text-3xl font-bold mb-10 leading-normal serif-font text-center">題目載入中...</h3>
+                    <div id="options-container" class="grid gap-4"></div>
+                </div>
+            </div>
+
+            <!-- Result -->
+            <div id="quiz-result" class="hidden text-center">
+                <div class="w-32 h-32 bg-yellow-500/20 rounded-full flex items-center justify-center mx-auto mb-8 animate-bounce">
+                    <i data-lucide="trophy" class="w-16 h-16 text-yellow-400"></i>
+                </div>
+                <h3 class="text-4xl font-bold mb-4">挑戰完成！</h3>
+                <p class="text-gray-400 mb-8 text-lg">你的修煉成果如下</p>
+                <div class="text-8xl font-bold serif-font text-white mb-12" id="final-score">0</div>
+                
+                <div class="flex flex-col md:flex-row gap-4 justify-center">
+                    <button onclick="toggleAnalysis()" class="bg-transparent border border-white text-white px-8 py-4 rounded-xl hover:bg-white hover:text-black transition font-bold">
+                        查看詳解與分析
+                    </button>
+                    <button onclick="location.reload()" class="bg-red-700 text-white px-8 py-4 rounded-xl hover:bg-red-600 transition font-bold shadow-lg shadow-red-900/50">
+                        再玩一次
+                    </button>
+                </div>
+
+                <div id="analysis-area" class="mt-16 text-left hidden bg-black/40 p-8 rounded-2xl border border-white/10">
+                    <h4 class="text-2xl font-bold mb-6 border-b border-gray-700 pb-4 text-white">試題解析</h4>
+                    <div id="analysis-content" class="space-y-8 text-gray-300"></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Floating CTA Button -->
+    <button onclick="startUnlockGame()" class="float-btn">
+        <i data-lucide="lightbulb" class="w-6 h-6"></i>
+        我懂了！
+    </button>
+
+    <!-- Footer Dashboard -->
+    <footer class="bg-gray-100 py-12 border-t border-gray-200">
+        <div class="max-w-6xl mx-auto px-6">
+            <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-6">
+                <p class="text-gray-500 text-sm">
+                    © 2025 Chinese Lit Journey. <span id="secret-btn" class="secret-trigger">「Hsu」</span>專為國一學生設計。
+                </p>
+            </div>
+            <div id="teacher-dashboard" class="hidden bg-white p-8 rounded-xl shadow-inner border border-gray-200">
+                <h3 class="font-bold text-xl mb-6 flex items-center gap-3 text-gray-800">
+                    <i data-lucide="bar-chart-2" class="text-teal-600 w-6 h-6"></i> 
+                    學生作答即時看板
+                </h3>
+                <div class="text-sm text-gray-500 mb-4 bg-yellow-50 p-4 rounded border border-yellow-100">
+                    <p class="font-bold text-gray-700 mb-2"><i data-lucide="info" class="w-4 h-4 inline mr-1"></i> 數據會自動同步。請分享此網頁連結給學生，他們的成績就會即時出現在這裡。</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm text-left text-gray-500">
+                        <thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th class="px-6 py-4">時間</th><th class="px-6 py-4">暱稱</th><th class="px-6 py-4">分數</th><th class="px-6 py-4">狀態</th></tr></thead>
+                        <tbody id="dashboard-table-body"><tr><td colspan="4" class="px-6 py-4 text-center text-gray-400">目前尚無數據，等待學生挑戰中...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // --- 1. UI Logic ---
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                }
+            });
+        }, { threshold: 0.1 });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            document.querySelectorAll('.reveal-on-scroll').forEach(el => observer.observe(el));
+            
+            // Secret Trigger for Teacher Dashboard
+            let clickCount = 0;
+            document.getElementById('secret-btn').addEventListener('click', () => {
+                clickCount++;
+                if (clickCount === 5) {
+                    toggleDashboard();
+                    clickCount = 0;
+                    Swal.fire({
+                        icon: 'success',
+                        title: '教師專區已開啟',
+                        text: '歡迎回來，Hsu 老師！',
+                        timer: 1500,
+                        showConfirmButton: false
+                    });
+                }
+            });
+        });
+
+        function scrollToSection(id) { document.getElementById(id).scrollIntoView({ behavior: 'smooth' }); }
+        function toggleDashboard() { 
+            const dashboard = document.getElementById('teacher-dashboard');
+            dashboard.classList.toggle('hidden');
+            if (!dashboard.classList.contains('hidden')) {
+                dashboard.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+        function toggleAnalysis() { document.getElementById('analysis-area').classList.toggle('hidden'); }
+
+        // --- 2. Modal Logic (Standard Fonts + High Quality Images) ---
+        const contentData = {
+            analects: {
+                title: "論語選：修身三部曲",
+                color: "#e67e22", 
+                panels: [
+                    { 
+                        title: "第一則：孝順的真諦", 
+                        text: "子游問孝。子曰：「今之孝者，是謂能養。至於犬馬，皆能有養；不敬，何以別乎？」",
+                        dialogue: "子游問：「怎樣才算孝順？」<br>孔子說：「現在人以為給父母飯吃就是孝順。可是我們也養狗養馬啊！<br>如果不尊敬父母，那跟養寵物有什麼兩樣呢？」<br>重點在於那一顆『敬』的心。",
+                        img: "https://images.unsplash.com/photo-1609220136736-443140cffec6?auto=format&fit=crop&w=800&q=80"
+                    },
+                    { 
+                        title: "第二則：堆土山的啟示", 
+                        text: "子曰：『譬如為山，未成一簣，止，吾止也。』",
+                        dialogue: "想像你在堆一座山，只差最後一桶土就成功了。這時候如果你放棄不倒下去，那之前流的汗都白費了。<br>孔子告訴我們：成敗在於堅持，半途而廢最可惜。",
+                        img: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?auto=format&fit=crop&w=800&q=80" 
+                    },
+                    { 
+                        title: "第三則：曾子的自我檢查", 
+                        text: "曾子曰：『吾日三省吾身：為人謀而不忠乎？與朋友交而不信乎？傳不習乎？』",
+                        dialogue: "曾子每天睡前都會問自己三個問題：<br>1. 幫別人做事盡力了嗎？(忠)<br>2. 跟朋友說話算話嗎？(信)<br>3. 老師教的複習了嗎？(習)<br>這不是自我懷疑，而是讓明天的自己比今天更棒。",
+                        img: "https://images.unsplash.com/photo-1506784983877-45594efa4cbe?auto=format&fit=crop&w=800&q=80" 
+                    }
+                ]
+            },
+            backview: {
+                title: "背影：無聲的父愛",
+                color: "#2980b9",
+                panels: [
+                    { 
+                        title: "那時真是太聰明了", 
+                        text: "關鍵句：我那時真是聰明過分，總覺他說話不大漂亮，非自己插嘴不可。",
+                        dialogue: "這是一種「倒反」修辭（自嘲）。<br>年輕時的朱自清嫌棄父親說話「迂」（老土），覺得自己懂比較多。<br>長大後回想起來，才發現那時候的自己其實最愚笨，不懂父親的深情。",
+                        img: "https://images.unsplash.com/photo-1455849318743-b2233052fcff?auto=format&fit=crop&w=800&q=80" 
+                    },
+                    { 
+                        title: "關鍵場景：攀爬月台", 
+                        text: "描寫：他用兩手攀著上面，兩腳再向上縮；他肥胖的身子向左微傾，顯出努力的樣子。",
+                        dialogue: "父親穿著黑布大馬褂（象徵喪期的沉重與心情的黯淡），用笨拙、肥胖的身軀爬上爬下。<br>這一幕沒有對話，卻是全文的高潮。父愛不需要語言，行動證明一切。",
+                        img: "https://images.unsplash.com/photo-1474487548417-781cb71495f3?auto=format&fit=crop&w=800&q=80" 
+                    },
+                    { 
+                        title: "象徵物：朱紅的橘子", 
+                        text: "對比：黑布小帽、黑布大馬褂 vs 朱紅的橘子。",
+                        dialogue: "在灰暗的背景（祖母過世、父親失業、黑衣）中，那幾顆「朱紅」的橘子顯得特別溫暖。<br>它們象徵了父愛，照亮了朱自清原本灰暗的心情。",
+                        img: "https://images.unsplash.com/photo-1611080626919-7cf5a9dbab5b?auto=format&fit=crop&w=800&q=80" 
+                    }
+                ]
+            },
+            prison: {
+                title: "心囚：真正的自由",
+                color: "#27ae60",
+                panels: [
+                    { 
+                        title: "有形 vs 無形", 
+                        text: "核心概念：心靈的枷鎖比有形的監獄更可怕。",
+                        dialogue: "有形的囚犯是被關在監獄裡；無形的囚犯是被名利、慾望、悲觀關在心裡。<br>杏林子告訴我們：即使身體自由，如果心被鎖住，你依然不快樂；反之，若心自由，身體的殘缺困不住你。",
+                        img: "https://images.unsplash.com/photo-1555786750-7c3c2b9a6b0e?auto=format&fit=crop&w=800&q=80" 
+                    },
+                    { 
+                        title: "轉念的力量", 
+                        text: "名言：我們可以生病，但不可以做個病人。",
+                        dialogue: "這是什麼意思？<br>生病是生理事實，但「做個病人」是一種依賴、軟弱的心理狀態。<br>杏林子選擇不被「病人」這個標籤定義，她選擇做一個作家、一個助人者。",
+                        img: "https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?auto=format&fit=crop&w=800&q=80" 
+                    }
+                ]
+            },
+            knowledge: {
+                title: "語文常識：閱讀導航",
+                color: "#8e44ad",
+                panels: [
+                    { 
+                        title: "3W 閱讀策略", 
+                        text: "What (內容), Why (目的), How (方法)",
+                        dialogue: "拿到一篇文章別急著看第一個字！先問自己：<br>1. What：這篇在講什麼？重點在哪？<br>2. Why：作者為什麼要寫？他想傳達什麼？<br>3. How：他用什麼方法寫？舉例？數據？故事？",
+                        img: "https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80" 
+                    },
+                    { 
+                        title: "非連續文本", 
+                        text: "圖表判讀技巧",
+                        dialogue: "考試常考圖表題，記住口訣：<br>「標題看大意，軸線看單位，極值看趨勢。」<br>不要被數字嚇到，圖表通常比文字更誠實！",
+                        img: "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80" 
+                    }
+                ]
+            },
+            ryan: {
+                title: "自學選文：行動的漣漪",
+                color: "#16a085",
+                panels: [
+                    { 
+                        title: "單純的善念", 
+                        text: "起因：老師說非洲缺水，挖井只要70元（加幣）。",
+                        dialogue: "6歲的萊恩以為70元很多，他努力做家事存錢。<br>結果發現70元只能買鑽井機的一個螺絲釘！<br>但他沒放棄，他說：「那我再多做一點家事！」這種單純的堅持最動人。",
+                        img: "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=800&q=80" 
+                    },
+                    { 
+                        title: "漣漪效應", 
+                        text: "結論：行動的水滴才能匯流大河。",
+                        dialogue: "萊恩的行動感動了鄰居，鄰居感動了媒體，媒體感動了全世界。<br>我們常覺得自己渺小，但萊恩證明了：只要開始行動，小水滴也能穿石，也能匯聚成河。",
+                        img: "https://images.unsplash.com/photo-1500375592092-40eb2168fd21?auto=format&fit=crop&w=800&q=80" 
+                    }
+                ]
+            },
+            review: {
+                title: "總整理：融會貫通",
+                color: "#c0392b",
+                panels: [
+                    {
+                        title: "內修與外行",
+                        text: "串聯所有課程",
+                        dialogue: "● 《論語》與《心囚》是「內功」：教你把心定下來，反省自己，轉化痛苦。<br>● 《背影》是「情感」：教你感受身邊被忽略的愛。<br>● 《閱讀策略》與《萊恩》是「招式」：教你如何讀懂世界，並動手改變世界。",
+                        img: "https://images.unsplash.com/photo-1462331940025-496dfbfc7564?auto=format&fit=crop&w=800&q=80"
+                    }
+                ]
+            }
+        };
+
+        function showDetailModal(lessonKey) {
+            const content = contentData[lessonKey];
+            const htmlContent = content.panels.map(p => `
+                <div class="comic-row">
+                    <div class="comic-img-box">
+                        <img src="${p.img}" class="comic-img" alt="${p.title}">
+                    </div>
+                    <div class="comic-content">
+                        <div class="comic-title">
+                            ${p.title}
+                        </div>
+                        <div class="comic-dialogue">
+                            ${p.dialogue}
+                        </div>
+                        <div class="comic-original">
+                            ${p.text}
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            Swal.fire({
+                title: `<span class="serif-font text-2xl" style="color: ${content.color}">${content.title}</span>`,
+                html: `<div class="p-2 bg-gray-50 rounded overflow-y-auto max-h-[70vh] text-left scroll-effect">${htmlContent}</div>`,
+                width: 800,
+                showCloseButton: true,
+                showConfirmButton: false,
+                background: '#ffffff',
+                didOpen: () => {
+                    lucide.createIcons();
+                }
+            });
+        }
+
+        // --- 3. Unlock Game Logic (New Feature) ---
+        let unlockedCount = 0;
+        
+        function startUnlockGame() {
+            unlockedCount = 0;
+            Swal.fire({
+                title: '解開智慧封印',
+                html: `
+                    <p class="mb-4 text-gray-600">點擊擊碎三個鎖鏈，解鎖核心結論！</p>
+                    <div class="lock-container">
+                        <i id="lock1" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(1)"></i>
+                        <i id="lock2" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(2)"></i>
+                        <i id="lock3" data-lucide="lock" class="w-12 h-12 lock-icon" onclick="unlock(3)"></i>
+                    </div>
+                `,
+                showConfirmButton: false,
+                didOpen: () => {
+                    lucide.createIcons();
+                }
+            });
+        }
+
+        window.unlock = (id) => {
+            const el = document.getElementById(`lock${id}`);
+            if (!el.classList.contains('unlocked')) {
+                // Logic check: must unlock in order (optional, but good for game feel)
+                // Here we allow any order for simplicity, or strictly 1->2->3
+                
+                el.classList.add('unlocked');
+                // Change icon visually after animation starts
+                setTimeout(() => {
+                    el.setAttribute('data-lucide', 'unlock');
+                    lucide.createIcons();
+                }, 200);
+                
+                unlockedCount++;
+                if (unlockedCount === 3) {
+                    setTimeout(() => {
+                        Swal.close(); // Close game modal
+                        showCoreMessage(); // Show reward
+                    }, 800);
+                }
+            }
+        }
+
+        function showCoreMessage() {
+            Swal.fire({
+                title: '核心結論',
+                html: `
+                    <div class="text-left p-4">
+                        <p class="text-xl font-bold serif-font text-red-700 text-center mb-4">「真正的強大，是溫柔與堅毅並存。」</p>
+                        <ul class="list-none space-y-3 text-gray-700">
+                            <li class="flex items-center gap-2"><i data-lucide="check-circle" class="text-green-500 w-5 h-5"></i> 像孔子一樣自律反省</li>
+                            <li class="flex items-center gap-2"><i data-lucide="heart" class="text-red-500 w-5 h-5"></i> 像朱自清一樣珍惜親情</li>
+                            <li class="flex items-center gap-2"><i data-lucide="sun" class="text-orange-500 w-5 h-5"></i> 像杏林子一樣樂觀轉念</li>
+                            <li class="flex items-center gap-2"><i data-lucide="zap" class="text-blue-500 w-5 h-5"></i> 像萊恩一樣立刻行動</li>
+                        </ul>
+                    </div>
+                `,
+                confirmButtonText: '我記住了！',
+                confirmButtonColor: '#c0392b',
+                width: 500
+            });
+            lucide.createIcons();
+        }
+
+        // --- 5. Quiz Logic (20 Questions Mode) ---
+        const fullQuizPool = [
+            // --- 國字注音與改錯 ---
+            { q: "交「卸」：請輸入「 」中文字的注音。", opts: ["ㄒㄧㄝˋ", "ㄩ", "ㄕㄨˇ", "ㄒㄧㄚˊ"], ans: 0, note: "卸（ㄒㄧㄝˋ）：解除。" },
+            { q: "管「轄」：請輸入「 」中文字的注音。", opts: ["ㄒㄧㄚˊ", "ㄏㄜˊ", "ㄍㄨㄢˇ", "ㄑㄧㄚˋ"], ans: 0, note: "轄（ㄒㄧㄚˊ）：管理、統制。" },
+            { q: "禁「錮」：請輸入「 」中文字的注音。", opts: ["ㄍㄨˋ", "ㄍㄨˇ", "ㄎㄨˋ", "ㄏㄨˋ"], ans: 0, note: "錮（ㄍㄨˋ）：封閉、監禁。" },
+            { q: "身陷囹「圄」：請輸入「 」中文字的注音。", opts: ["ㄩˇ", "ㄨˊ", "ㄍㄨˋ", "ㄡ"], ans: 0, note: "圄（ㄩˇ）：監獄。" },
+            { q: "「罹」患：請輸入「 」中文字的注音。", opts: ["ㄌㄧˊ", "ㄌㄨㄛˊ", "ㄨㄟˊ", "ㄌㄡˋ"], ans: 0, note: "罹（ㄌㄧˊ）：遭受（疾病或災禍）。" },
+            { q: "「躊躇」：請輸入「 」中文字的注音。", opts: ["ㄔㄡˊ ㄔㄨˊ", "ㄓㄨˋ ㄓㄨˋ", "ㄕㄡˋ ㄓㄨˋ", "ㄊㄠˊ ㄊㄞˋ"], ans: 0, note: "躊躇（ㄔㄡˊ ㄔㄨˊ）：猶豫不決的樣子。" },
+            { q: "蹣「跚」：請輸入「 」中文字的注音。", opts: ["ㄕㄢ", "ㄇㄢˊ", "ㄕㄢˋ", "ㄘㄜˋ"], ans: 0, note: "跚（ㄕㄢ）：形容走路緩慢不穩。" },
+            { q: "狼「藉」：請輸入「 」中文字的注音。", opts: ["ㄐㄧˊ", "ㄐㄧㄝˋ", "ㄐㄧ", "ㄒㄧˊ"], ans: 0, note: "藉（ㄐㄧˊ）：雜亂的樣子。" },
+            { q: "連「署」：請輸入「 」中文字的注音。", opts: ["ㄕㄨˇ", "ㄓㄨˇ", "ㄕㄨˋ", "ㄊㄨˊ"], ans: 0, note: "署（ㄕㄨˇ）：簽名。" },
+            { q: "「迂」腐：請輸入「 」中文字的注音。", opts: ["ㄩ", "ㄩˊ", "ㄍㄢ", "ㄑㄧㄢ"], ans: 0, note: "迂（ㄩ）：言行守舊，不切實際。" },
+            { q: "「頹」喪：請輸入「 」中文字的注音。", opts: ["ㄊㄨㄟˊ", "ㄊㄨ", "ㄎㄜ", "ㄅㄞˋ"], ans: 0, note: "頹（ㄊㄨㄟˊ）：倒塌，引申為意志消沉。" },
+            { q: "「拭」淚：請輸入「 」中文字的注音。", opts: ["ㄕˋ", "ㄔˋ", "ㄗㄜˊ", "ㄉㄞˋ"], ans: 0, note: "拭（ㄕˋ）：擦抹。" },
+            { q: "「揀」定：請輸入「 」中文字的注音。", opts: ["ㄐㄧㄢˇ", "ㄌㄧㄢˋ", "ㄉㄨㄥ", "ㄙㄨˋ"], ans: 0, note: "揀（ㄐㄧㄢˇ）：挑選。" },
+            { q: "主「宰」：請輸入「 」中文字的注音。", opts: ["ㄗㄞˇ", "ㄒㄧㄣ", "ㄍㄨ", "ㄑㄧㄢ"], ans: 0, note: "宰（ㄗㄞˇ）：主持、治理。" },
+            { q: "下列哪個選項用字完全正確？", opts: ["一股作氣", "再接再厲", "甘拜下風", "走頭無路"], ans: 2, note: "A應為「一鼓作氣」；B應為「再接再厲」；D應為「走投無路」。" },
+            
+            // --- 詞義與修辭 ---
+            { q: "「譬如為山，未成一簣」的「簣」是指什麼？", opts: ["盛土的竹筐", "一種山的名字", "一種石頭", "計算時間的單位"], ans: 0, note: "簣：盛土的竹器。" },
+            { q: "「大去之期不遠矣」的「大去」使用了什麼修辭？", opts: ["婉曲", "誇飾", "譬喻", "映襯"], ans: 0, note: "婉曲：不直說死亡，而用委婉的詞語代替。" },
+            { q: "「我那時真是太聰明了」一句，作者使用了什麼修辭來表達自責？", opts: ["倒反", "譬喻", "轉化", "設問"], ans: 0, note: "倒反：言非所意，其實是說自己當時太愚笨，不懂父親苦心。" },
+            { q: "「三人行，必有我師焉」這句話的主旨是什麼？", opts: ["隨時隨地向人學習", "三個人走路比較安全", "老師一定要找三個人", "交朋友要小心"], ans: 0, note: "強調學習的對象無所不在，擇善而從。" },
+            { q: "下列何者不是「背影」一文中象徵父愛的物品？", opts: ["紫毛大衣", "朱紅的橘子", "黑布小帽", "手杖"], ans: 3, note: "文中未特別強調手杖象徵父愛，橘子與紫毛大衣則是具體展現。" },
+
+            // --- 課文理解 ---
+            { q: "小明放學回家反省：「今天答應小華的事有沒有做到？」這是實踐《論語》哪種精神？", opts: ["與朋友交而不信乎", "傳不習乎", "為人謀而不忠乎", "學而時習之"], ans: 0, note: "信：誠信。答應朋友的事要做到。" },
+            { q: "「譬如為山，未成一簣，止，吾止也。」這句話勉勵我們什麼？", opts: ["持之以恆", "量力而為", "見好就收", "分工合作"], ans: 0, note: "強調做事不能半途而廢。" },
+            { q: "「見賢思齊焉，見不賢而內自省也」的意思是什麼？", opts: ["看到好人要學習，看到壞人要反省自己", "看到好人要嫉妒", "看到有才華的人要讚美", "看到不賢的人要教訓他"], ans: 0, note: "這是修身的方法，正反兩面皆可為師。" },
+            { q: "曾子曰：「吾日三省吾身」，其中「為人謀而不忠乎」的「忠」意思是？", opts: ["盡心盡力", "效忠國家", "忠誠老實", "中庸之道"], ans: 0, note: "在此指替人辦事是否盡心竭力。" },
+            { q: "子游問孝。孔子認為「今之孝者，是謂能養」還不夠，必須具備什麼？", opts: ["敬", "禮", "義", "信"], ans: 0, note: "子曰：「...不敬，何以別乎？」強調孝順的核心在於尊敬。" },
+            { q: "在《背影》中，父親明明身材肥胖、行動不便，為什麼堅持要親自爬下月台去買橘子？", opts: ["透過費力的行動表達深情", "父親覺得朱自清不會買水果", "父親想展示體力", "橘子在特價"], ans: 0, note: "這是傳統父親「愛在心裡口難開」的表現。" },
+            { q: "《背影》一文的寫作線索（貫穿全文的關鍵）是什麼？", opts: ["背影", "橘子", "眼淚", "火車"], ans: 0, note: "全文以「背影」為線索，前後呼應。" },
+            { q: "朱自清在文中一共流了幾次淚？", opts: ["四次", "一次", "兩次", "三次"], ans: 0, note: "文中描述流淚共有四次（悲家境、感父愛、惜別、讀信）。" },
+            { q: "父親說：「我買幾個橘子去。你就在此地，不要走動。」這句話表現了什麼？", opts: ["對兒子的呵護與不放心", "父親很霸道", "父親想支開兒子", "父親怕兒子迷路"], ans: 0, note: "雖然兒子已二十歲，在父親眼中仍是需要照顧的孩子。" },
+            { q: "文末父親信中提到「膀子疼痛厲害，舉箸提筆，諸多不便」，這引發了作者什麼情緒？", opts: ["對父親衰老的感傷與思念", "對父親生病的厭煩", "想買藥給父親", "覺得父親在討拍"], ans: 0, note: "讀信看到父親身體大不如前，引發無限感傷與思念，再現背影。" },
+            { q: "在《心囚》一文中，「真正的囚犯」是指什麼？", opts: ["心靈被名利慾望鎖住的人", "身體有殘疾的人", "被關在看守所的人", "沒錢的人"], ans: 0, note: "心囚：心靈的自我禁錮。" },
+            { q: "杏林子雖然身體受限，但她如何打破「心囚」？", opts: ["轉念與創造價值", "等待奇蹟", "抱怨命運", "完全放棄"], ans: 0, note: "她透過寫作與正向思考，讓心靈自由。" },
+            { q: "文中提到「牆角的磚頭」若被拿來蓋房子，它就有了什麼？", opts: ["價值", "自由", "生命", "感情"], ans: 0, note: "比喻人若能發揮作用，生命就有價值。" },
+            { q: "下列何者是作者認為打破心囚的鑰匙？", opts: ["樂觀進取的心", "大量的金錢", "強壯的身體", "廣大的人脈"], ans: 0, note: "心靈的態度決定是否被囚禁。" },
+            { q: "「不管是有的囚犯，或是無形的囚犯，主要在於你......」接續的文句應是？", opts: ["你的心是否受到轄制", "你的身體是否自由", "你的錢是否夠多", "你的地位是否崇高"], ans: 0, note: "強調心的自主性。" },
+            { q: "關於閱讀策略「3W」，若思考「這篇文章想告訴我們什麼？」，屬於哪一個W？", opts: ["What (內容)", "Why (目的)", "How (方法)", "Where (哪裡)"], ans: 0, note: "What 指的是文章的主旨與內容。" },
+            { q: "萊恩的故事（行動的水滴）主要給我們什麼啟示？", opts: ["小小的行動也能匯聚成大力量", "要長大才能做公益", "挖井需要很多錢", "做善事是為了出名"], ans: 0, note: "強調坐而言不如起而行，積少成多。" },
+            { q: "在閱讀文章前，先看標題、圖表來預測內容，這屬於什麼策略？", opts: ["略讀與瀏覽", "精讀", "朗讀", "背誦"], ans: 0, note: "透過標題圖表快速抓重點。" },
+            { q: "萊恩為了挖井，最初做了什麼事？", opts: ["做家事賺錢", "去偷錢", "跟同學募款", "寫信給總統"], ans: 0, note: "他從自己能做的小事（做家事）開始累積。" },
+            { q: "如果文章中有圖表，我們應該注意什麼？", opts: ["標題與數據的變化", "圖表的顏色好不好看", "圖表佔多大版面", "忽略它直接看文字"], ans: 0, note: "圖表通常包含關鍵數據與趨勢。" }
+        ];
+
+        let currentQuizState = { nickname: '', score: 0, currentQIndex: 0, gameQuestions: [] };
+
+        function startQuiz() {
+            const input = document.getElementById('nickname-input');
+            if (!input.value.trim()) { Swal.fire('等等', '大俠請留步，請先輸入您的稱號！', 'warning'); return; }
+            
+            currentQuizState.nickname = input.value.trim();
+            currentQuizState.score = 0;
+            currentQuizState.currentQIndex = 0;
+            
+            // Randomly select 20 questions from the expanded pool
+            const shuffled = [...fullQuizPool].sort(() => 0.5 - Math.random());
+            currentQuizState.gameQuestions = shuffled.slice(0, 20);
+
+            document.getElementById('quiz-login').classList.add('hidden');
+            document.getElementById('quiz-game').classList.remove('hidden');
+            loadQuestion(0);
+        }
+
+        function loadQuestion(index) {
+            const q = currentQuizState.gameQuestions[index];
+            document.getElementById('question-counter').innerText = `QUESTION ${index + 1} / 20`;
+            document.getElementById('question-text').innerText = q.q;
+            
+            const progress = ((index) / 20) * 100;
+            document.getElementById('progress-bar').style.width = `${progress}%`;
+
+            const container = document.getElementById('options-container');
+            container.innerHTML = '';
+
+            // Shuffle indices for options
+            let shuffledOptionIndices = [0, 1, 2, 3].sort(() => 0.5 - Math.random());
+            
+            shuffledOptionIndices.forEach(originalIndex => {
+                const btn = document.createElement('button');
+                btn.className = "w-full text-left p-4 rounded-lg border border-gray-600 bg-gray-800/50 hover:bg-gray-700 hover:border-gray-400 transition-all text-lg flex items-center gap-3 text-white";
+                
+                btn.innerHTML = `
+                    <span class="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-sm font-bold">
+                        ${String.fromCharCode(65 + shuffledOptionIndices.indexOf(originalIndex))}
+                    </span> 
+                    ${q.opts[originalIndex]}
+                `;
+                
+                btn.onclick = () => handleAnswer(index, originalIndex); 
+                container.appendChild(btn);
+            });
+        }
+
+        function handleAnswer(qIndex, selectedOptionIndex) {
+            const q = currentQuizState.gameQuestions[qIndex];
+            
+            const isCorrect = selectedOptionIndex === q.ans;
+            q.userSelected = selectedOptionIndex;
+
+            if (isCorrect) {
+                currentQuizState.score += 5; // 20 questions * 5 pts = 100
+                Swal.fire({ icon: 'success', title: '答對了！', timer: 600, showConfirmButton: false, backdrop: `rgba(0,0,0,0.5)` });
+            } else {
+                Swal.fire({ icon: 'error', title: '可惜！', timer: 600, showConfirmButton: false, backdrop: `rgba(0,0,0,0.5)` });
+            }
+
+            currentQuizState.currentQIndex++;
+            if (currentQuizState.currentQIndex < 20) {
+                setTimeout(() => loadQuestion(currentQuizState.currentQIndex), 800);
+            } else {
+                setTimeout(finishQuiz, 800);
+            }
+        }
+
+        async function finishQuiz() {
+            document.getElementById('quiz-game').classList.add('hidden');
+            document.getElementById('quiz-result').classList.remove('hidden');
+            
+            const scoreEl = document.getElementById('final-score');
+            scoreEl.innerText = currentQuizState.score;
+
+            const analysisDiv = document.getElementById('analysis-content');
+            analysisDiv.innerHTML = currentQuizState.gameQuestions.map((q, i) => {
+                const isCorrect = q.userSelected === q.ans;
+                return `
+                    <div class="border-b border-gray-700 pb-4 last:border-0">
+                        <p class="font-bold mb-1 text-white">Q${i+1}: ${q.q}</p>
+                        <p class="text-xs ${isCorrect ? 'text-green-400' : 'text-red-400'} mb-2">
+                            ${isCorrect ? '答對' : `答錯（正確：${q.opts[q.ans]}）`}
+                        </p>
+                        <p class="text-gray-400 bg-gray-800 p-3 rounded"><span class="text-yellow-500 font-bold">解析：</span>${q.note}</p>
+                    </div>
+                `;
+            }).join('');
+
+            if (window.submitQuizResult) {
+                await window.submitQuizResult(currentQuizState.nickname, currentQuizState.score, null);
+            }
+        }
+        
+        window.renderDashboard = (results) => {
+            const tbody = document.getElementById('dashboard-table-body');
+            if (results.length === 0) { tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-3 text-center text-gray-400">尚無數據，等待學生挑戰中...</td></tr>'; return; }
+            tbody.innerHTML = results.map(r => {
+                let timeStr = '剛剛';
+                if (r.timestamp) { const d = new Date(r.timestamp.seconds * 1000); timeStr = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; }
+                let color = r.score < 60 ? 'text-red-800 bg-red-100' : 'text-green-800 bg-green-100';
+                return `<tr class="bg-white border-b"><td class="px-4 py-3 text-gray-500 text-xs">${timeStr}</td><td class="px-4 py-3 font-bold text-gray-800">${r.nickname}</td><td class="px-4 py-3 text-gray-800">${r.score}</td><td class="px-4 py-3"><span class="${color} text-xs px-2 py-0.5 rounded">完成</span></td></tr>`;
+            }).join('');
+        }
+    </script>
+</body>
+</html>
